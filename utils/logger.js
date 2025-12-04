@@ -3,11 +3,16 @@ const path = require('path');
 
 class Logger {
   constructor() {
-    this.logDirectory = path.join(__dirname, '../logs');
-    
-    // Create logs directory if it doesn't exist
-    if (!fs.existsSync(this.logDirectory)) {
-      fs.mkdirSync(this.logDirectory, { recursive: true });
+    // Check if running in Vercel or if file logging is explicitly disabled
+    this.isFileLoggingEnabled = !process.env.VERCEL && !process.env.DISABLE_FILE_LOGGING;
+
+    if (this.isFileLoggingEnabled) {
+      this.logDirectory = path.join(__dirname, '../logs');
+
+      // Create logs directory if it doesn't exist
+      if (!fs.existsSync(this.logDirectory)) {
+        fs.mkdirSync(this.logDirectory, { recursive: true });
+      }
     }
   }
 
@@ -26,11 +31,17 @@ class Logger {
       ...metadata
     };
 
-    // Write to log file
-    const logFileName = `reward-distribution-${new Date().toISOString().split('T')[0]}.log`;
-    const logFilePath = path.join(this.logDirectory, logFileName);
-    
-    fs.appendFileSync(logFilePath, JSON.stringify(logEntry) + '\n');
+    // Write to log file only if enabled
+    if (this.isFileLoggingEnabled) {
+      const logFileName = `reward-distribution-${new Date().toISOString().split('T')[0]}.log`;
+      const logFilePath = path.join(this.logDirectory, logFileName);
+
+      try {
+        fs.appendFileSync(logFilePath, JSON.stringify(logEntry) + '\n');
+      } catch (err) {
+        console.error('Failed to write to log file:', err);
+      }
+    }
 
     // Also log to console
     const consoleMessage = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
