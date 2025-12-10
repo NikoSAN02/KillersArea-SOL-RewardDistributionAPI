@@ -22,6 +22,7 @@
   "dependencies": {
     "@solana/spl-token": "^0.4.6",
     "@solana/web3.js": "^1.91.8",
+    "@supabase/supabase-js": "^2.87.1",
     "axios": "^1.13.2",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",

@@ -4,12 +4,14 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const RewardController = require('./controllers/rewardController');
+const UserStatsController = require('./controllers/userStatsController');
 const { unityValidationMiddleware } = require('./middleware/unityValidation');
 const logger = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const rewardController = new RewardController();
+const userStatsController = new UserStatsController();
 
 // Rate limiting: Max 100 requests per 15 minutes per IP
 const limiter = rateLimit({
@@ -80,15 +82,30 @@ app.post('/distribute-batch', unityValidationMiddleware, (req, res) => {
   rewardController.distributeBatchRewards(req, res);
 });
 
+// Record user data endpoint
+app.post('/recordUserData', unityValidationMiddleware, (req, res) => {
+  userStatsController.recordUserData(req, res);
+});
+
+// Update user data endpoint
+app.put('/recordUserData', unityValidationMiddleware, (req, res) => {
+  userStatsController.updateUserData(req, res);
+});
+
+// Update game stats endpoint (Extended Key)
+app.post('/UpdateGameStats', unityValidationMiddleware, (req, res) => {
+  userStatsController.updateGameStats(req, res);
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error', { 
-    error: err.message, 
+  logger.error('Unhandled error', {
+    error: err.message,
     stack: err.stack,
     url: req.url,
     ip: req.ip
   });
-  
+
   res.status(500).json({
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred'
@@ -98,7 +115,7 @@ app.use((err, req, res, next) => {
 // 404 handler
 app.use('*', (req, res) => {
   logger.warn('Route not found', { method: req.method, url: req.url, ip: req.ip });
-  
+
   res.status(404).json({
     error: 'Route Not Found',
     message: `Cannot ${req.method} ${req.originalUrl}`
@@ -107,17 +124,17 @@ app.use('*', (req, res) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', { 
-    promise: promise, 
-    reason: reason 
+  logger.error('Unhandled Rejection at:', {
+    promise: promise,
+    reason: reason
   });
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', { 
-    error: error.message, 
-    stack: error.stack 
+  logger.error('Uncaught Exception:', {
+    error: error.message,
+    stack: error.stack
   });
   process.exit(1);
 });
