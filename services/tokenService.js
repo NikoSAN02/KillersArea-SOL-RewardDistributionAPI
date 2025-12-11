@@ -18,14 +18,10 @@ class TokenService {
 
     // Create a temporary token mint address for development if not provided
     if (!process.env.TOKEN_MINT_ADDRESS) {
+      // Optional: Log a message or just ignore, since we are using SOL now
+      // Keeping it just in case legacy code checks it, but it's not used for transfer
       if (process.env.NODE_ENV !== 'production') {
-        // Generate a temporary keypair for development
-        this.tokenMintAddress = Keypair.generate().publicKey;
-        console.warn('⚠️ WARNING: Using a generated token mint address for development. DO NOT use in production!');
-        console.log(`📝 Development token mint address: ${this.tokenMintAddress.toBase58()}`);
-        console.log('📝 To use a real token, set TOKEN_MINT_ADDRESS in your .env file');
-      } else {
-        throw new Error('TOKEN_MINT_ADDRESS is required in environment variables');
+        console.log('📝 Operating in SOL transfer mode. TOKEN_MINT_ADDRESS is optional.');
       }
     } else {
       this.tokenMintAddress = new PublicKey(process.env.TOKEN_MINT_ADDRESS);
@@ -62,7 +58,7 @@ class TokenService {
       // Check server wallet balance
       let serverBalance = 0;
       try {
-        serverBalance = await this.solanaService.getServerTokenBalance(this.tokenMintAddress);
+        serverBalance = await this.solanaService.getSolBalance();
       } catch (balanceError) {
         logger.warn('Could not retrieve server balance, proceeding with transfer attempt', {
           error: balanceError.message,
@@ -71,74 +67,26 @@ class TokenService {
         // Continue with the transfer, the transaction will fail if there are insufficient funds
       }
 
-      // Get decimals and adjust amount
-      const decimals = await this.solanaService.getMintDecimals(this.tokenMintAddress);
-      const adjustedAmount = Math.floor(amount * Math.pow(10, decimals));
+      // No need to adjust for decimals as amount is considered SOL now
+      // But verify it is reasonable
 
-      logger.info('Adjusting amount for decimals', {
-        originalAmount: amount,
-        decimals,
-        adjustedAmount
+      logger.info('Preparing SOL transfer', {
+        amount: amount,
+        recipient: recipientAddress
       });
 
-      if (serverBalance > 0 && serverBalance < adjustedAmount) {
-        const error = new Error(`Insufficient balance in server wallet. Available: ${serverBalance}, Required: ${adjustedAmount} (${amount} tokens)`);
+      if (serverBalance > 0 && serverBalance < amount) {
+        const error = new Error(`Insufficient SOL balance in server wallet. Available: ${serverBalance}, Required: ${amount}`);
         logger.error('Insufficient server balance', {
-          required: adjustedAmount,
+          required: amount,
           available: serverBalance,
           recipient: recipientAddress
         });
         throw error;
       }
 
-      // Get program ID (Token or Token-2022)
-      const programId = await this.solanaService.getMintProgramId(this.tokenMintAddress);
-
-      // Create or get associated token account for recipient
-      // Note: createAssociatedTokenAccount in SolanaService now handles programId internally
-      const recipientTokenAccount = await this.solanaService.createAssociatedTokenAccount(
-        this.tokenMintAddress,
-        recipientPublicKey
-      );
-
-      // Create associated token account for server if not exists
-      const serverTokenAccount = await getOrCreateAssociatedTokenAccount(
-        connection,
-        serverWallet,
-        this.tokenMintAddress,
-        serverWallet.publicKey,
-        false,
-        'confirmed',
-        undefined,
-        programId
-      );
-
-      // Create transaction
-      const transaction = new Transaction().add(
-        createTransferInstruction(
-          serverTokenAccount.address, // source
-          recipientTokenAccount.address, // destination
-          serverWallet.publicKey, // owner of source account
-          adjustedAmount, // amount
-          [], // multisig authority (not used)
-          programId
-        )
-      );
-
-      // Sign transaction
-      transaction.feePayer = serverWallet.publicKey;
-      transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-      // Send and confirm transaction
-      const signature = await sendAndConfirmTransaction(
-        connection,
-        transaction,
-        [serverWallet],
-        {
-          commitment: 'confirmed',
-          skipPreflight: false,
-        }
-      );
+      // Perform SOL Transfer
+      const signature = await this.solanaService.transferSol(recipientAddress, amount);
 
       logger.logTransaction(signature, recipientAddress, amount);
 

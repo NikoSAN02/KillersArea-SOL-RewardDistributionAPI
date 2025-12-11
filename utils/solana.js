@@ -3,6 +3,9 @@ const {
   PublicKey,
   Keypair,
   clusterApiUrl,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
+  Transaction,
 } = require('@solana/web3.js');
 const {
   getOrCreateAssociatedTokenAccount,
@@ -209,6 +212,70 @@ class SolanaService {
       }
       const errorMessage = error.message || JSON.stringify(error);
       throw new Error(`Failed to get server token balance: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Get server wallet SOL balance
+   * @returns {Promise<number>} SOL balance in server wallet
+   */
+  async getSolBalance() {
+    try {
+      const balance = await this.connection.getBalance(this.serverWallet.publicKey);
+      return balance / LAMPORTS_PER_SOL;
+    } catch (error) {
+      console.error('Error getting SOL balance:', error);
+      throw new Error(`Failed to get SOL balance: ${error.message}`);
+    }
+  }
+
+  /**
+   * Transfer SOL to a recipient
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of SOL to transfer
+   * @returns {Promise<string>} Transaction signature
+   */
+  async transferSol(recipientAddress, amount) {
+    try {
+      // Validate inputs
+      if (!this.isValidSolanaAddress(recipientAddress)) {
+        throw new Error('Invalid recipient address');
+      }
+
+      const recipientPublicKey = new PublicKey(recipientAddress);
+      const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+
+      // Check balance
+      const balance = await this.connection.getBalance(this.serverWallet.publicKey);
+
+      // We need to keep some dust for fees, but let's just check raw amount for now
+      // A typical transfer is 5000 lamports (0.000005 SOL)
+      if (balance < lamports + 5000) {
+        throw new Error(`Insufficient SOL balance. Available: ${balance / LAMPORTS_PER_SOL}, Required: ${amount} + fees`);
+      }
+
+      const transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: this.serverWallet.publicKey,
+          toPubkey: recipientPublicKey,
+          lamports: lamports,
+        })
+      );
+
+      const signature = await this.connection.sendTransaction(transaction, [this.serverWallet]);
+
+      // Confirm transaction
+      const latestBlockHash = await this.connection.getLatestBlockhash();
+      await this.connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: signature,
+      });
+
+      return signature;
+    } catch (error) {
+      console.error('Error in transferSol:', error);
+      throw new Error(`Failed to transfer SOL: ${error.message}`);
     }
   }
 }
