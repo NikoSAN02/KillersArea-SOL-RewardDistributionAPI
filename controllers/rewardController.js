@@ -7,7 +7,7 @@ const singleRewardSchema = Joi.object({
   address: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
     'string.pattern.base': 'Invalid Solana address format'
   }),
-  amount: Joi.number().integer().min(1).required()
+  amount: Joi.number().positive().required()
 });
 
 // Validation schema for batch reward request
@@ -16,7 +16,7 @@ const batchRewardSchema = Joi.array().items(
     address: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
       'string.pattern.base': 'Invalid Solana address format'
     }),
-    amount: Joi.number().integer().min(1).required()
+    amount: Joi.number().positive().required()
   })
 ).min(1).max(100); // Max 100 transfers per batch request
 
