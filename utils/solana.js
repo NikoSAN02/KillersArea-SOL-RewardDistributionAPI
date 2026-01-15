@@ -43,16 +43,43 @@ class SolanaService {
       try {
         // First, try to parse as JSON array (for array format)
         let secretKey;
-        try {
-          const secretKeyArray = JSON.parse(process.env.SERVER_WALLET_PRIVATE_KEY);
-          secretKey = new Uint8Array(secretKeyArray);
-        } catch (parseError) {
-          // If that fails, try to decode as base58 (for private key strings)
+        const privateKeyRaw = process.env.SERVER_WALLET_PRIVATE_KEY.trim();
+
+        // 1. Try JSON Array
+        if (privateKeyRaw.startsWith('[') && privateKeyRaw.endsWith(']')) {
           try {
-            secretKey = bs58.decode(process.env.SERVER_WALLET_PRIVATE_KEY);
-          } catch (bs58Error) {
-            throw new Error(`Private key must be either base58 encoded string or JSON array of numbers: ${parseError.message}`);
+            const secretKeyArray = JSON.parse(privateKeyRaw);
+            secretKey = new Uint8Array(secretKeyArray);
+          } catch (parseError) {
+            // Invalid JSON, continue
           }
+        }
+
+        // 2. Try Base64
+        // A Base64 string for 64 bytes will be around 88 chars and decode to exactly 64 bytes
+        if (!secretKey) {
+          try {
+            const buffer = Buffer.from(privateKeyRaw, 'base64');
+            if (buffer.length === 64) {
+              secretKey = new Uint8Array(buffer);
+            }
+          } catch (base64Error) {
+            // processing issue, continue
+          }
+        }
+
+        // 3. Try Base58 (Fallback)
+        if (!secretKey) {
+          try {
+            secretKey = bs58.decode(privateKeyRaw);
+          } catch (bs58Error) {
+            throw new Error(`Private key format not recognized. Must be JSON array, Base64 string (64 bytes), or Base58 string.`);
+          }
+        }
+
+        // Final validation
+        if (secretKey.length !== 64) {
+          throw new Error(`Invalid secret key length: ${secretKey.length} bytes. Expected 64 bytes.`);
         }
 
         this.serverWallet = Keypair.fromSecretKey(secretKey);
