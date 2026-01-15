@@ -305,6 +305,103 @@ class SolanaService {
       throw new Error(`Failed to transfer SOL: ${error.message}`);
     }
   }
+
+  /**
+   * Transfer SPL Tokens to a recipient
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of tokens to transfer (UI Amount)
+   * @param {PublicKey} tokenMintAddress - The Mint address of the token
+   * @returns {Promise<string>} Transaction signature
+   */
+  async transferSplToken(recipientAddress, amount, tokenMintAddress) {
+    try {
+      console.log(`Starting SPL Token Transfer: ${amount} to ${recipientAddress}`);
+
+      // 1. Validate Recipient
+      if (!this.isValidSolanaAddress(recipientAddress)) {
+        throw new Error('Invalid recipient address');
+      }
+      const recipientPublicKey = new PublicKey(recipientAddress);
+
+      // 2. Get Mint Info (Decimals & Program Owner)
+      const mintProgramId = await this.getMintProgramId(tokenMintAddress);
+      const decimals = await this.getMintDecimals(tokenMintAddress);
+
+      // Calculate raw amount (atoms/lamports equivalent for tokens)
+      // Use BigInt for precision if necessary, but standard number usually suffices for max supply < 2^53
+      // Math.pow(10, decimals) might lose precision for very high decimals combined with large amounts
+      // Using BigInt logic for safety
+      const factor = BigInt(10) ** BigInt(decimals);
+      // Handle potential internal float representation of 'amount'
+      // Best to stringify and split to avoid float errors, or standard Math.round if expected simple amounts
+      // For now, simpler Math.round approach with standard JS numbers, assuming safe integer range
+      // or convert amount to string and parse.
+      const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+
+      console.log(`Token Mint: ${tokenMintAddress.toBase58()}`);
+      console.log(`Decimals: ${decimals}, Raw Amount: ${rawAmount.toString()}`);
+
+      // 3. Get/Create Recipient's Associated Token Account (ATA)
+      // We must pay for the rent if it doesn't exist
+      const recipientATA = await getOrCreateAssociatedTokenAccount(
+        this.connection,
+        this.serverWallet, // Payer
+        tokenMintAddress,
+        recipientPublicKey, // Owner
+        true, // Allow owner off curve
+        'confirmed',
+        undefined,
+        mintProgramId
+      );
+
+      // 4. Get Server's Associated Token Account
+      const serverATA = await getOrCreateAssociatedTokenAccount(
+        this.connection,
+        this.serverWallet, // Payer
+        tokenMintAddress,
+        this.serverWallet.publicKey, // Onwer
+        true,
+        'confirmed',
+        undefined,
+        mintProgramId
+      );
+
+      // Check balance (optional but good for error msg)
+      const accountInfo = await this.connection.getTokenAccountBalance(serverATA.address);
+      if (BigInt(accountInfo.value.amount) < rawAmount) {
+        throw new Error(`Insufficient token balance. Available: ${accountInfo.value.uiAmount}, Required: ${amount}`);
+      }
+
+      // 5. Create Transfer Instruction
+      const transaction = new Transaction().add(
+        createTransferInstruction(
+          serverATA.address, // Source
+          recipientATA.address, // Destination
+          this.serverWallet.publicKey, // Owner
+          rawAmount, // Amount in atoms
+          [], // Multi-signers
+          mintProgramId // Program ID (Token or Token-2022)
+        )
+      );
+
+      // 6. Send and Confirm
+      const signature = await this.connection.sendTransaction(transaction, [this.serverWallet]);
+
+      const latestBlockHash = await this.connection.getLatestBlockhash();
+      await this.connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: signature,
+      });
+
+      console.log(`Transfer successful. Signature: ${signature}`);
+      return signature;
+
+    } catch (error) {
+      console.error('Error in transferSplToken:', error);
+      throw new Error(`Failed to transfer SPL Token: ${error.message}`);
+    }
+  }
 }
 
 module.exports = SolanaService;

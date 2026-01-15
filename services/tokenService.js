@@ -16,15 +16,15 @@ class TokenService {
   constructor() {
     this.solanaService = new SolanaService();
 
-    // Create a temporary token mint address for development if not provided
+    // Token Mint Address is now REQUIRED for SPL transfers
     if (!process.env.TOKEN_MINT_ADDRESS) {
-      // Optional: Log a message or just ignore, since we are using SOL now
-      // Keeping it just in case legacy code checks it, but it's not used for transfer
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('📝 Operating in SOL transfer mode. TOKEN_MINT_ADDRESS is optional.');
+      console.warn('⚠️ TOKEN_MINT_ADDRESS is missing in .env');
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('TOKEN_MINT_ADDRESS is required for production SPL transfers');
       }
     } else {
       this.tokenMintAddress = new PublicKey(process.env.TOKEN_MINT_ADDRESS);
+      console.log(`✅ Token Service initialized for Mint: ${this.tokenMintAddress.toBase58()}`);
     }
   }
 
@@ -37,6 +37,10 @@ class TokenService {
   async transferTokens(recipientAddress, amount) {
     try {
       logger.info('Starting token transfer', { recipient: recipientAddress, amount });
+
+      if (!this.tokenMintAddress) {
+        throw new Error('Token Mint Address is not configured');
+      }
 
       // Validate inputs
       if (!recipientAddress || !this.solanaService.isValidSolanaAddress(recipientAddress)) {
@@ -51,42 +55,31 @@ class TokenService {
         throw error;
       }
 
-      const recipientPublicKey = new PublicKey(recipientAddress);
-      const connection = this.solanaService.getConnection();
-      const serverWallet = this.solanaService.getServerWallet();
-
-      // Check server wallet balance
-      let serverBalance = 0;
+      // Check server wallet SOL balance (for gas fees only)
+      // We don't check against 'amount' here because 'amount' is in Tokens, balance is in SOL
+      let serverSolBalance = 0;
       try {
-        serverBalance = await this.solanaService.getSolBalance();
+        serverSolBalance = await this.solanaService.getSolBalance();
       } catch (balanceError) {
         logger.warn('Could not retrieve server balance, proceeding with transfer attempt', {
-          error: balanceError.message,
-          recipient: recipientAddress
+          error: balanceError.message
         });
-        // Continue with the transfer, the transaction will fail if there are insufficient funds
       }
 
-      // No need to adjust for decimals as amount is considered SOL now
-      // But verify it is reasonable
+      // Ensure we have at least a little SOL for fees (e.g. 0.002 SOL)
+      // This is a loose check, the actual transaction will fail if insufficient
+      if (serverSolBalance < 0.002) {
+        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). Transaction might fail due to insufficient gas.`);
+      }
 
-      logger.info('Preparing SOL transfer', {
+      logger.info('Preparing SPL Token transfer', {
         amount: amount,
-        recipient: recipientAddress
+        recipient: recipientAddress,
+        mint: this.tokenMintAddress.toBase58()
       });
 
-      if (serverBalance > 0 && serverBalance < amount) {
-        const error = new Error(`Insufficient SOL balance in server wallet. Available: ${serverBalance}, Required: ${amount}`);
-        logger.error('Insufficient server balance', {
-          required: amount,
-          available: serverBalance,
-          recipient: recipientAddress
-        });
-        throw error;
-      }
-
-      // Perform SOL Transfer
-      const signature = await this.solanaService.transferSol(recipientAddress, amount);
+      // Perform SPL Token Transfer
+      const signature = await this.solanaService.transferSplToken(recipientAddress, amount, this.tokenMintAddress);
 
       logger.logTransaction(signature, recipientAddress, amount);
 
