@@ -52,7 +52,7 @@ class RewardController {
 
       const { address, amount } = value;
 
-      // Perform the token transfer
+      // Perform the SOL transfer
       const transactionSignature = await this.tokenService.transferTokens(address, amount);
 
       res.status(200).json({
@@ -111,7 +111,7 @@ class RewardController {
 
       const recipients = value;
 
-      // Perform batch token transfers
+      // Perform batch SOL transfers
       const results = await this.tokenService.transferTokensBatch(recipients);
 
       // Calculate summary
