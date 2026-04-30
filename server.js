@@ -45,7 +45,9 @@ app.use(helmet({
     preload: true
   }
 }));
-app.use(cors());
+app.use(cors({
+  origin: 'https://stackmon.fun'
+}));
 
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
