@@ -7,7 +7,10 @@ const singleRewardSchema = Joi.object({
   address: Joi.string().required().pattern(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).messages({
     'string.pattern.base': 'Invalid Solana address format'
   }),
-  amount: Joi.number().positive().required()
+  score: Joi.number().required(),
+  mode: Joi.string().valid('practice', 'bot', 'ranked').required(),
+  bonus_sol: Joi.number().min(0).required(),
+  bet_amount: Joi.number().min(0).required()
 });
 
 // Validation schema for batch reward request
@@ -50,25 +53,55 @@ class RewardController {
         });
       }
 
-      const { address, amount } = value;
+      const { address, score, mode, bonus_sol, bet_amount } = value;
+
+      let calculatedReward = 0;
+
+      // Calculate the Base Reward based on the Game Mode
+      if (mode === "practice") {
+          // Practice Mode: 1000 points = 1 SOL (0.001 per point)
+          calculatedReward = score * 0.001;
+      } 
+      else if (mode === "bot") {
+          // Bot Mode: 1000 points = 0.5 SOL (0.0005 per point)
+          calculatedReward = score * 0.0005;
+      } 
+      else if (mode === "ranked") {
+          // Online Ranked Mode: Winner takes 1.8x of their original bet
+          calculatedReward = bet_amount * 1.8;
+      }
+
+      // Add the Combo Multiplier Bonus (The extra SOL earned by placing perfect blocks)
+      const finalRewardToDistribute = calculatedReward + bonus_sol;
+
+      if (finalRewardToDistribute <= 0) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Calculated reward must be greater than 0'
+        });
+      }
 
       // Perform the SOL transfer
-      const transactionSignature = await this.tokenService.transferTokens(address, amount);
+      const transactionSignature = await this.tokenService.transferTokens(address, finalRewardToDistribute);
 
       res.status(200).json({
         success: true,
         message: 'Reward distributed successfully',
         data: {
           recipient: address,
-          amount: amount,
-          transaction: transactionSignature
+          amount: finalRewardToDistribute,
+          transaction: transactionSignature,
+          breakdown: {
+            baseReward: calculatedReward,
+            bonus: bonus_sol
+          }
         }
       });
 
       logger.info('Single reward distribution completed', {
         transaction: transactionSignature,
         recipient: address,
-        amount
+        amount: finalRewardToDistribute
       });
     } catch (error) {
       logger.error('Error distributing single reward', {
