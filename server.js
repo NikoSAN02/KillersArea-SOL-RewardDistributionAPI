@@ -46,8 +46,15 @@ app.use(helmet({
   }
 }));
 app.use(cors({
-  origin: 'https://stackmon.fun'
+  origin: ['https://stackmon.fun', 'https://killers-area-sol-reward-distributio.vercel.app', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-unity-validation'],
+  credentials: true,
+  optionsSuccessStatus: 200
 }));
+
+// Handle explicit OPTIONS requests
+app.options('*', cors());
 
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
