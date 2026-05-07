@@ -81,9 +81,14 @@ app.get('/balance', unityValidationMiddleware, (req, res) => {
   rewardController.getBalance(req, res);
 });
 
-// Single reward distribution endpoint
-app.post('/distribute', unityValidationMiddleware, (req, res) => {
+// Single reward distribution endpoint (Standard)
+app.post('/distribute-normal', unityValidationMiddleware, (req, res) => {
   rewardController.distributeReward(req, res);
+});
+
+// Single Magicblock reward distribution endpoint
+app.post('/distribute', unityValidationMiddleware, (req, res) => {
+  rewardController.distributeMagicblockReward(req, res);
 });
 
 // Batch reward distribution endpoint

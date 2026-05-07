@@ -108,6 +108,61 @@ class TokenService {
 
     return results;
   }
+
+  /**
+   * Transfer SOL to a recipient using Magicblock
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of SOL to transfer
+   * @returns {Promise<string>} Transaction signature
+   */
+  async transferTokensMagicblock(recipientAddress, amount) {
+    try {
+      logger.info('Starting SOL transfer via Magicblock', { recipient: recipientAddress, amount });
+
+      // Validate inputs
+      if (!recipientAddress || !this.solanaService.isValidSolanaAddress(recipientAddress)) {
+        const error = new Error('Invalid recipient address');
+        logger.error('Invalid recipient address', { recipient: recipientAddress });
+        throw error;
+      }
+
+      if (typeof amount !== 'number' || amount <= 0) {
+        const error = new Error('Amount must be a positive number');
+        logger.error('Invalid amount provided', { amount, recipient: recipientAddress });
+        throw error;
+      }
+
+      // Check server wallet SOL balance
+      let serverSolBalance = 0;
+      try {
+        serverSolBalance = await this.solanaService.getSolBalance();
+      } catch (balanceError) {
+        logger.warn('Could not retrieve server balance, proceeding with transfer attempt', {
+          error: balanceError.message
+        });
+      }
+
+      // Ensure we have enough SOL for the transfer + fees (approx 0.000005 SOL)
+      if (serverSolBalance < amount + 0.002) {
+        logger.warn(`Server SOL balance is low (${serverSolBalance} SOL). Transaction might fail. Required: > ${amount + 0.002}`);
+      }
+
+      logger.info('Preparing Magicblock SOL transfer', {
+        amount: amount,
+        recipient: recipientAddress
+      });
+
+      // Perform SOL Transfer via Magicblock
+      const signature = await this.solanaService.transferMagicblock(recipientAddress, amount);
+
+      logger.logTransaction(signature, recipientAddress, amount);
+
+      return signature;
+    } catch (error) {
+      logger.logTransactionError(recipientAddress, amount, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = TokenService;

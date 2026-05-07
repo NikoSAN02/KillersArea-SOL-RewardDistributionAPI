@@ -6,6 +6,7 @@ const {
   SystemProgram,
   LAMPORTS_PER_SOL,
   Transaction,
+  VersionedTransaction,
 } = require('@solana/web3.js');
 const {
   getOrCreateAssociatedTokenAccount,
@@ -13,11 +14,14 @@ const {
   TOKEN_PROGRAM_ID,
   Account,
   getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createSyncNativeInstruction,
   TOKEN_2022_PROGRAM_ID,
   getMint,
 } = require('@solana/spl-token');
 const bs58Lib = require('bs58');
 const bs58 = bs58Lib.default || bs58Lib;
+const axios = require('axios');
 
 class SolanaService {
   constructor() {
@@ -400,6 +404,122 @@ class SolanaService {
     } catch (error) {
       console.error('Error in transferSplToken:', error);
       throw new Error(`Failed to transfer SPL Token: ${error.message}`);
+    }
+  }
+
+  /**
+   * Transfer SOL to a recipient using Magicblock's Private Payments API
+   * @param {string} recipientAddress - Recipient's Solana wallet address
+   * @param {number} amount - Amount of SOL to transfer
+   * @returns {Promise<string>} Transaction signature
+   */
+  async transferMagicblock(recipientAddress, amount) {
+    try {
+      // Validate inputs
+      if (!this.isValidSolanaAddress(recipientAddress)) {
+        throw new Error('Invalid recipient address');
+      }
+
+      const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+
+      // Check balance
+      const balance = await this.connection.getBalance(this.serverWallet.publicKey);
+      if (balance < lamports + 5000) {
+        throw new Error(`Insufficient SOL balance. Available: ${balance / LAMPORTS_PER_SOL}, Required: ${amount} + fees`);
+      }
+
+      // Request Magicblock API
+      const WSOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
+      const ata = await getAssociatedTokenAddress(WSOL_MINT, this.serverWallet.publicKey);
+      
+      const wsolInfo = await this.connection.getAccountInfo(ata);
+      let wsolBalance = 0;
+      if (wsolInfo) {
+          const tokenAccountBalance = await this.connection.getTokenAccountBalance(ata);
+          wsolBalance = parseInt(tokenAccountBalance.value.amount, 10);
+      }
+
+      // Check if we need to wrap more SOL
+      // Magicblock fees are 0.001 SOL (1,000,000 lamports) plus the transfer amount
+      // We also add a small margin of 0.01 SOL (10,000,000 lamports) to prevent exact boundary failures
+      const magicblockFee = 1000000;
+      const margin = 10000000;
+      const requiredWsol = lamports + magicblockFee + margin;
+      
+      if (wsolBalance < requiredWsol) {
+          const wrapAmount = requiredWsol - wsolBalance;
+          console.log(`Insufficient WSOL. Wrapping ${wrapAmount} lamports...`);
+          const wrapTx = new Transaction();
+          if (!wsolInfo) {
+              wrapTx.add(createAssociatedTokenAccountInstruction(
+                  this.serverWallet.publicKey,
+                  ata,
+                  this.serverWallet.publicKey,
+                  WSOL_MINT
+              ));
+          }
+          wrapTx.add(SystemProgram.transfer({
+              fromPubkey: this.serverWallet.publicKey,
+              toPubkey: ata,
+              lamports: wrapAmount
+          }));
+          wrapTx.add(createSyncNativeInstruction(ata));
+
+          const sig = await this.connection.sendTransaction(wrapTx, [this.serverWallet]);
+          await this.connection.confirmTransaction(sig);
+          console.log(`WSOL Wrapped successfully. Signature: ${sig}`);
+      }
+
+      const payload = {
+        from: this.serverWallet.publicKey.toBase58(),
+        to: recipientAddress,
+        mint: "So11111111111111111111111111111111111111112", // WSOL mint
+        amount: lamports,
+        visibility: "private",
+        fromBalance: "base",
+        toBalance: "base",
+        cluster: this.network,
+        wrapAndUnwrapSol: true
+      };
+
+      console.log(`Requesting Magicblock transfer for ${amount} SOL to ${recipientAddress} via ${this.network}`);
+      const response = await axios.post('https://payments.magicblock.app/v1/spl/transfer', payload);
+
+      if (!response.data || !response.data.transactionBase64) {
+        throw new Error('Invalid response from Magicblock API');
+      }
+
+      const transactionBuffer = Buffer.from(response.data.transactionBase64, 'base64');
+      
+      let signature;
+      if (response.data.version === 'v0') {
+        const versionedTransaction = VersionedTransaction.deserialize(transactionBuffer);
+        versionedTransaction.sign([this.serverWallet]);
+        signature = await this.connection.sendTransaction(versionedTransaction);
+      } else {
+        const transaction = Transaction.from(transactionBuffer);
+        // We only sign, we don't need to fetch blockhash as magicblock API returns a recent one
+        transaction.sign(this.serverWallet);
+        signature = await this.connection.sendRawTransaction(transaction.serialize());
+      }
+
+      // Confirm transaction
+      const latestBlockHash = await this.connection.getLatestBlockhash();
+      await this.connection.confirmTransaction({
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+        signature: signature,
+      });
+
+      return signature;
+    } catch (error) {
+      if (error.logs) {
+         console.error('Transaction logs:', error.logs);
+      } else if (typeof error.getLogs === 'function') {
+         console.error('Transaction logs:', error.getLogs());
+      }
+      console.error('Error in transferMagicblock:', error?.response?.data || error);
+      throw new Error(`Failed to transfer via Magicblock: ${error?.response?.data?.error?.message || error.message}`);
     }
   }
 }
